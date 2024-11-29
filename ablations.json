@@ -1,0 +1,7 @@
+{
+    "CA-Dynamic": {
+        "exp_name": "CA-Dynamic",
+        "c_selector": "casc_attn",
+        "checkpoint": "checkpoints/CA-Dynamic/<dataset>/best_model.pth"
+    }
+}
