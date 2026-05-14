@@ -936,12 +936,12 @@ class ResUNSAT():
         padded with False. current_C must be >= max_b(len(res_mask_b[b]))."""
         B = self.batch_size_b
         device = th.device(self.config['device'])
-        out = th.zeros(B, current_C, current_C, dtype=th.bool, device=device)
+        out_np = np.zeros((B, current_C, current_C), dtype=bool)
         for b in range(B):
             n = self.res_mask_b[b].shape[0]
             if n > 0:
-                out[b, :n, :n] = th.from_numpy(self.res_mask_b[b]).to(device)
-        return out
+                out_np[b, :n, :n] = self.res_mask_b[b]
+        return th.from_numpy(out_np).to(device)
 
     def iter_batches(self, batch_size: int):
         """Generator yielding (formulas, sample_idxs) pairs of size up to

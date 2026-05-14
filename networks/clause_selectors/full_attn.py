@@ -18,6 +18,18 @@ class FullAttention(nn.Module):
 		q_width = hidden_size
 		self.W_Q = nn.Linear(q_width, hidden_size)
 		self.W_K = nn.Linear(hidden_size, hidden_size)
+		# Cached upper-triangle bool mask, grown on demand and sliced per call.
+		self._upper_cache: Optional[th.Tensor] = None
+
+	def _get_upper(self, C: int, device) -> th.Tensor:
+		cache = self._upper_cache
+		if cache is None or cache.size(0) < C or cache.device != device:
+			new_size = max(C, cache.size(0) * 2 if cache is not None else C)
+			self._upper_cache = th.triu(
+				th.ones(new_size, new_size, device=device, dtype=th.bool),
+				diagonal=1,
+			)
+		return self._upper_cache[:C, :C]
 
 
 	def get_grid_mask(self):
@@ -134,7 +146,7 @@ class FullAttention(nn.Module):
 			& clause_mask.unsqueeze(1)
 			& clause_mask.unsqueeze(2)
 		)
-		upper = th.triu(th.ones(C, C, device=device, dtype=th.bool), diagonal=1)
+		upper = self._get_upper(C, device)
 		pair_valid = pair_valid & upper.unsqueeze(0)
 
 		flat_attn = attn.reshape(B, C * C)
@@ -158,21 +170,22 @@ class FullAttention(nn.Module):
 			# For rows with no expert pair (e.g. already-done), gather at (0,0)
 			# and overwrite with 0.0 so that subsequent loss masking (which
 			# multiplies by 0) does not produce 0*-inf=NaN.
-			i_list, j_list, has_expert = [], [], []
-			for b in range(B):
-				p = expert_pairs[b]
+			ij_np = np.zeros((B, 2), dtype=np.int64)
+			has_expert_np = np.zeros(B, dtype=bool)
+			any_missing = False
+			for b, p in enumerate(expert_pairs):
 				if p is None:
-					i_list.append(0); j_list.append(0)
-					has_expert.append(False)
-				else:
-					a, c_ = sorted(p)
-					i_list.append(a); j_list.append(c_)
-					has_expert.append(True)
-			i = th.tensor(i_list, dtype=th.long, device=device)
-			j = th.tensor(j_list, dtype=th.long, device=device)
+					any_missing = True
+					continue
+				a, c_ = p if p[0] <= p[1] else (p[1], p[0])
+				ij_np[b, 0] = a
+				ij_np[b, 1] = c_
+				has_expert_np[b] = True
+			ij = th.from_numpy(ij_np).to(device)
+			i, j = ij[:, 0], ij[:, 1]
 			gathered = flat_logp[th.arange(B, device=device), i * C + j]
-			if not all(has_expert):
-				safe = th.tensor(has_expert, dtype=th.bool, device=device)
+			if any_missing:
+				safe = th.from_numpy(has_expert_np).to(device)
 				max_logp = th.where(safe, gathered, th.zeros_like(gathered))
 			else:
 				max_logp = gathered

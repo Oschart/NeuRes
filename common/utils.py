@@ -256,7 +256,6 @@ def get_config():
     parser.add_argument("--num_heads", type=int, default=1)
     parser.add_argument("--blend_context", action='store_true')
     parser.add_argument("--attn_QK", type=str, default="Emb")
-    parser.add_argument("--sparse_attn", action='store_true')
     parser.add_argument("--L_aggregate", type=str, default="avg_in")
     parser.add_argument("--adapt_sat_gt", action='store_true')
     parser.add_argument("--dual_loss_mode", type=str, default="min")
