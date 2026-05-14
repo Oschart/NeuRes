@@ -16,5 +16,5 @@ env = ResUNSAT(config, shuffle=True)
 
 trainer = TeacherForce(config, env)
 
-trainer.train(n_epochs_plan=config['n_epochs'],  n_epochs_stop=config['n_epochs'], tag="supervised")
+trainer.train(n_epochs_plan=config['n_epochs'],  n_epochs_stop=config['n_epochs'])
 

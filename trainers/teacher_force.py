@@ -96,7 +96,7 @@ class TeacherForce():
         return kept
 
     # @profile
-    def train(self, n_epochs_plan: int, n_epochs_stop: int, tag: str = "supervised", callback=None):
+    def train(self, n_epochs_plan: int, n_epochs_stop: int, tag: str = "", callback=None):
 
         self._setup_buffers()
         self.solver.train()

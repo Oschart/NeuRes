@@ -25,5 +25,5 @@ def callback(epoch, avg_solved):
     
 
 # Supervised pretraining
-trainer.train(n_epochs_plan=overfit_steps, n_epochs_stop=overfit_steps, tag="supervised", callback=callback)
+trainer.train(n_epochs_plan=overfit_steps, n_epochs_stop=overfit_steps, callback=callback)
 print(f"Overfit test FAILED!")

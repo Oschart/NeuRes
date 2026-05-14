@@ -72,6 +72,6 @@ class Logger():
         log_dict_ = {f"{prefix}/{k}": safer_mean(v) for k,v in self.stats_buffer[mode].items()}
         log_dict_["Iterations"] = iteration
         log_dict_["Samples"] = iteration * self.batch_size
-        log_dict_["Time (s)"] = time() - self.start_time
+        log_dict_[f"{prefix}/Time (s)"] = time() - self.start_time
         self.log(log_dict_)
 
