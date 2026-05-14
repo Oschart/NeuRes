@@ -14,13 +14,13 @@ class AnchAttention(nn.Module):
 		super(AnchAttention, self).__init__()
 		self.config = config
 		self.env: ResUNSAT = config['env']
-		hidden_size = config['hidden_size']
-		self.var_K = nn.Linear(hidden_size, hidden_size)
-		self.var_Q = nn.Linear(hidden_size, hidden_size)
-		self.var_attn = nn.Linear(hidden_size, 1)
+		emb_size = config['emb_size']
+		self.var_K = nn.Linear(emb_size, emb_size)
+		self.var_Q = nn.Linear(emb_size, emb_size)
+		self.var_attn = nn.Linear(emb_size, 1)
 
-		self.W_Q = nn.Linear(hidden_size, hidden_size)
-		self.W_K = nn.Linear(hidden_size, hidden_size)
+		self.W_Q = nn.Linear(emb_size, emb_size)
+		self.W_K = nn.Linear(emb_size, emb_size)
 
 	def select_var(self, state):
 		# Keys
@@ -95,7 +95,7 @@ class AnchAttention(nn.Module):
 		q = self.W_Q(Q)
 		k = self.W_K(K)
 		
-		attn_scores = th.bmm(q, k.transpose(-2, -1)) / np.sqrt(self.config['hidden_size'])
+		attn_scores = th.bmm(q, k.transpose(-2, -1)) / np.sqrt(self.config['emb_size'])
 
 		keep_mask = piv_dict["v_res_mask"]
 		# Remap taken indices to smaller grid
@@ -222,7 +222,7 @@ class AnchAttention(nn.Module):
 		K = th.gather(pool, 1, neg_idx.unsqueeze(-1).expand(B, max_neg, emb))
 		q = self.W_Q(Q)
 		k = self.W_K(K)
-		attn_scores = th.bmm(q, k.transpose(-2, -1)) / np.sqrt(self.config['hidden_size'])  # (B, max_pos, max_neg)
+		attn_scores = th.bmm(q, k.transpose(-2, -1)) / np.sqrt(self.config['emb_size'])  # (B, max_pos, max_neg)
 
 		# Build per-row taken_pair_mask: True where the (global_pos, global_neg)
 		# pair is already taken. For each (p, n) in the small grid, look up

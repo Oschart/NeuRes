@@ -235,7 +235,6 @@ def get_config():
     parser.add_argument("--freeze", type=str, default="")
     # Embedder args
     parser.add_argument("--emb_size", type=int, default=128)
-    parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--n_rounds", type=str, default="32")
     parser.add_argument("--parent_merge", action='store_true')
     parser.add_argument("--partial_round_alpha", type=float, default=1.0)

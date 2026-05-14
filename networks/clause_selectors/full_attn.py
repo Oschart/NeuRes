@@ -14,10 +14,9 @@ class FullAttention(nn.Module):
 	def __init__(self, config):
 		super(FullAttention, self).__init__()
 		self.config = config
-		hidden_size = config['hidden_size']
-		q_width = hidden_size
-		self.W_Q = nn.Linear(q_width, hidden_size)
-		self.W_K = nn.Linear(hidden_size, hidden_size)
+		emb_size = config['emb_size']
+		self.W_Q = nn.Linear(emb_size, emb_size)
+		self.W_K = nn.Linear(emb_size, emb_size)
 		# Cached upper-triangle bool mask, grown on demand and sliced per call.
 		self._upper_cache: Optional[th.Tensor] = None
 
@@ -62,7 +61,7 @@ class FullAttention(nn.Module):
 		mask_upper = th.triu(keep_mask, diagonal=1).to(self.config['device'])
 
 		R, C = th.where(mask_upper)
-		attn_scores = th.bmm(q, k.transpose(-2, -1)) / math.sqrt(self.config['hidden_size'])
+		attn_scores = th.bmm(q, k.transpose(-2, -1)) / math.sqrt(self.config['emb_size'])
 
 		if self.config['mask_mode'] == "upper+lower":
 			mask_lower = th.tril(keep_mask, diagonal=-1).to(self.config['device'])
@@ -137,7 +136,7 @@ class FullAttention(nn.Module):
 		q = self.W_Q(pool)
 		k = self.W_K(pool)
 		# (B, C, C)
-		attn = th.bmm(q, k.transpose(-2, -1)) / math.sqrt(self.config['hidden_size'])
+		attn = th.bmm(q, k.transpose(-2, -1)) / math.sqrt(self.config['emb_size'])
 
 		keep_mask = state["res_mask_pair"]                      # (B, C, C) bool
 		clause_mask = state["clause_mask"][:, :C]                # (B, C) bool

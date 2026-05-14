@@ -12,12 +12,11 @@ class CascAttention(nn.Module):
 	def __init__(self, config):
 		super(CascAttention, self).__init__()
 		self.config = config
-		hidden_size = config['hidden_size']
-		self.hidden_size = hidden_size
-		self.W1 = nn.Linear(hidden_size, hidden_size)
-		Q_size = hidden_size if config['step_attn_cond'] == "add" else 2*hidden_size
-		self.W2 = nn.Linear(Q_size, hidden_size)
-		self.vt = nn.Linear(hidden_size, 1)
+		emb_size = config['emb_size']
+		self.W1 = nn.Linear(emb_size, emb_size)
+		Q_size = emb_size if config['step_attn_cond'] == "add" else 2*emb_size
+		self.W2 = nn.Linear(Q_size, emb_size)
+		self.vt = nn.Linear(emb_size, 1)
 
 	def step(self, candidates, query, valid_mask=None):
 		# (batch_size, max_seq_len, hidden_size)

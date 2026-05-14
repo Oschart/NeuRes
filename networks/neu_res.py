@@ -23,10 +23,8 @@ class NeuRes(nn.Module):
 
 		self.config = config
 		self.env: ResUNSAT = config['env']
-		# Embedding dimension
+		# Embedding dimension (shared across embedder, selectors, decoder)
 		self.emb_size = config['emb_size']
-		# (Decoder) hidden size
-		self.hidden_size = config['hidden_size']
 		# Bidirectional Encoder
 		self.bidirectional = config['bidirectional']
 		self.num_directions = 2 if config['bidirectional'] else 1

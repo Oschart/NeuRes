@@ -8,7 +8,7 @@ class Encoder(nn.Module):
 	def __init__(self, config):
 		super(Encoder, self).__init__()
 
-		self.rnn = nn.LSTM(input_size=config['emb_size'], hidden_size=config['hidden_size'], num_layers=config['num_layers'],
+		self.rnn = nn.LSTM(input_size=config['emb_size'], hidden_size=config['emb_size'], num_layers=config['num_layers'],
 						   batch_first=True, bidirectional=config['bidirectional'])
 
 	def forward(self, embedded_inputs, input_lengths, hidden=None):
@@ -27,9 +27,9 @@ class Critic(nn.Module):
 
 		self.config = config
 		self.net = nn.Sequential(
-			nn.Linear(config['hidden_size'], config['hidden_size']),
+			nn.Linear(config['emb_size'], config['emb_size']),
 			nn.Tanh(),
-			nn.Linear(config['hidden_size'], 1)
+			nn.Linear(config['emb_size'], 1)
 		)
 
 	def forward(self, h_i):
@@ -42,11 +42,11 @@ class AssignDecoder(nn.Module):
 
 		self.config = config
 		self.env: ResUNSAT = config['env']
-		q_width = config['hidden_size']
+		q_width = config['emb_size']
 		self.net = nn.Sequential(
-			nn.Linear(q_width, config['hidden_size']),
+			nn.Linear(q_width, config['emb_size']),
 			nn.Tanh(),
-			nn.Linear(config['hidden_size'], 1),
+			nn.Linear(config['emb_size'], 1),
 			# Squeeze last 1 dim
 			nn.Flatten(start_dim=-2)
 		)
@@ -98,7 +98,7 @@ class AssignDecoder(nn.Module):
 		L_emb = state["literal_emb"]
 		# Condition embeddings on h_i
 		n_vars = L_emb.shape[1]//2
-		L_emb = L_emb.reshape(1, 2, n_vars, self.config['hidden_size'])
+		L_emb = L_emb.reshape(1, 2, n_vars, self.config['emb_size'])
 
 		if self.config['L_aggregate'] == "avg_in":
 			V_emb = th.mean(L_emb, dim=1)
