@@ -331,11 +331,15 @@ class MP_Embedder(nn.Module):
         self._zero_padded_states_b()
 
     def embed_clause_batch(self, new_clauses_per_row, running_np: np.ndarray) -> dict:
-        """Per row: if running_np[b] is True, advance current_clause_count[b]
-        by exactly 1 (so all running rows stay column-aligned). If a real
-        resolvent was derived, write its literal indicators into L_unpack and
-        flip clause_mask to True at the new slot; otherwise leave both zero/False
-        (a dummy slot that subsequent attention will mask out).
+        """Per row: if a real resolvent was derived (running_np[b] True AND
+        new_clauses_per_row[b] non-empty), claim slot current_clause_count[b],
+        write its literal indicators into L_unpack, flip clause_mask True at
+        that slot, then advance the counter. Rows that failed to derive a
+        clause (e.g. unsupervised picks of non-resolvable / duplicate pairs)
+        do NOT claim a slot — the counter stays put, so the embedder's slot
+        index keeps matching env.clauses_b index in subsequent steps. The
+        failure path then degenerates to a pure MP round on the unchanged-
+        shape state, matching the original embed_clause([]) behavior.
 
         running_np is a CPU numpy bool array (typically `~env.done_b`) — we
         avoid round-tripping a GPU tensor here so the loop stays sync-free."""
@@ -344,30 +348,30 @@ class MP_Embedder(nn.Module):
 
         # ---- Phase 1: CPU-side index gathering (no GPU syncs) -------------
         # Walk per-row Python clause lists and collect flat (row, lit, slot)
-        # triples for a single batched scatter. new_slots_cpu[b] is the slot
-        # claimed by row b this step (0 for done rows; matches original which
-        # left it at the th.zeros default).
+        # triples for a single batched scatter. new_slots_cpu[b] holds the
+        # slot claimed by row b this step; meaningful only when has_real_cpu[b].
         rows_lit, lit_pos, slot_pos = [], [], []
         new_slots_cpu = np.zeros(B, dtype=np.int64)
         has_real_cpu = np.zeros(B, dtype=bool)
         for b in range(B):
             if not running_np[b]:
                 continue
+            new_cs = new_clauses_per_row[b] if new_clauses_per_row[b] else []
+            if not new_cs:
+                # Pure MP-round step for this row: no slot claimed so the
+                # embedder slot index stays aligned with env.clauses_b index.
+                continue
             slot = int(self.current_clause_count_cpu[b])
             if slot >= self.H_max_b:
                 continue
             new_slots_cpu[b] = slot
-            new_cs = new_clauses_per_row[b] if new_clauses_per_row[b] else []
-            if new_cs:
-                c_new = new_cs[0]
-                for lit in c_new:
-                    var = abs(lit) - 1
-                    rows_lit.append(b)
-                    slot_pos.append(slot)
-                    lit_pos.append(var if lit > 0 else self.max_vars_b + var)
-                has_real_cpu[b] = True
-            # else: leave L_unpack column zero and clause_mask[b, slot]=False
-            #       (already False from init — column is dummy/masked).
+            c_new = new_cs[0]
+            for lit in c_new:
+                var = abs(lit) - 1
+                rows_lit.append(b)
+                slot_pos.append(slot)
+                lit_pos.append(var if lit > 0 else self.max_vars_b + var)
+            has_real_cpu[b] = True
             self.current_clause_count_cpu[b] += 1
 
         # ---- Phase 2: single batched GPU writes ---------------------------
@@ -391,10 +395,9 @@ class MP_Embedder(nn.Module):
                 real_rows = th.from_numpy(real_rows_np).to(device)
                 self.clause_mask_b[real_rows, new_slot_per_row[real_rows]] = True
 
-        # Grow C_state if current_C advanced. Pad with zeros — the th.where
-        # below sets canonical C_init at the new slot of each running row that
-        # actually claimed a column; rows that didn't keep their column zero,
-        # which matches what _zero_padded_states_b would have produced anyway.
+        # Grow C_state only if some row actually claimed a new column.
+        # Padded positions stay zero (and clause_mask_b is False there), so
+        # _zero_padded_states_b keeps them inert in subsequent rounds.
         new_C = self.current_C_int
         if new_C > old_C:
             delta = new_C - old_C
@@ -405,16 +408,16 @@ class MP_Embedder(nn.Module):
                 th.cat([self.C_state_b[1], pad_c], dim=2),
             )
 
-        # Re-init the LSTM cell at the new slot of each running row to the
-        # canonical "fresh clause" state. Use th.where to build new C_state
-        # tensors rather than mutating in place — C_state_b[0] is the output
-        # of the previous round's LSTM and still part of the autograd graph.
-        if running_np.any():
+        # Re-init the LSTM cell at the newly-claimed slot of each row that
+        # derived a real clause. Use th.where to build new C_state tensors
+        # rather than mutating in place — C_state_b[0] is the output of the
+        # previous round's LSTM and still part of the autograd graph.
+        if has_real_cpu.any():
             init_ts = self.init_ts.to(self.device)
             C_init_h = self.C_init(init_ts).view(1, 1, 1, -1)          # (1,1,1,emb)
             slot_mask = th.zeros(B, new_C, dtype=th.bool, device=device)
-            running_idx_np = np.where(running_np)[0].astype(np.int64)
-            rows = th.from_numpy(running_idx_np).to(device)
+            real_rows_np = np.where(has_real_cpu)[0].astype(np.int64)
+            rows = th.from_numpy(real_rows_np).to(device)
             slot_mask[rows, new_slot_per_row[rows]] = True
             slot_mask4 = slot_mask.unsqueeze(0).unsqueeze(-1)           # (1, B, new_C, 1)
             h_target = C_init_h.expand_as(self.C_state_b[0])
