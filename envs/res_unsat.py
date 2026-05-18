@@ -27,7 +27,6 @@ class ResUNSAT():
         self.reward_map = {
             "binary": self.binary_R,
             "length": self.length_R,
-            "lookahead": self.lookahead_R,
         }
 
         self.dataset = None
@@ -301,29 +300,6 @@ class ResUNSAT():
             self.r_visited[c_len] = True
             return reward
         return R
-    
-    def lookahead_R(self):
-        n_levels = self.formula.n_vars
-        self.r_levels = np.logspace(0, n_levels, n_levels, base=2)/2**(n_levels)
-        self.r_levels = np.flip(self.r_levels)
-        self.leaders = [None] * n_levels
-        self.build_lookahead_mat()
-        def R(c_new):
-            if c_new is None: return 0
-            self.update_lookahead_mat()
-            curr_score = self.S1[-1]
-            leader = self.leaders[len(c_new)]
-            if leader is None:
-                leader_score = np.zeros_like(curr_score)
-            else:
-                leader_score = self.S1[leader]
-            r_comp = radix_comp(curr_score, leader_score)
-            if r_comp == 1:
-                if len(c_new) > 0: self.r_levels[len(c_new)] /= 2
-                self.leaders[len(c_new)] = len(self.clauses)-1
-                return self.r_levels[len(c_new)]
-            return 0
-        return R
 
     def _setup_reward(self):
         if self.mode == "val":
@@ -554,37 +530,6 @@ class ResUNSAT():
                     cnt += 1
         return cnt/2
     
-    def build_lookahead_mat(self):
-        # F => (num_clauses, num_literals)
-        F = self.clause_mat
-        res_mask = self.res_mask
-        F_res = self.F_res
-        N, L = self.clause_mat.shape
-
-        R_len = np.abs(F_res).sum(axis=-1)
-        R_len[~res_mask] = L+1
-        S1 = np.apply_along_axis(lambda x: np.bincount(x, minlength=L+2), axis=1, arr=R_len)
-        S1 = S1[:, :-1]
-        self.S1 = S1
-
-    def update_lookahead_mat(self):
-        # F => (num_clauses, num_literals)
-        F = self.clause_mat
-        F_res = self.F_res[-1]
-        res_mask = self.res_mask[-1][:-1]
-        S1 = self.S1
-        N, L = F.shape
-        
-        R_len = np.abs(F_res).sum(axis=-1)[:-1]
-        R_len[~res_mask] = L+1
-        S = np.apply_along_axis(lambda x: np.bincount(x, minlength=L+2), axis=1, arr=R_len[:, None])
-        S = S[:, :-1]
-        C_score = S.sum(axis=0)
-        C_score[len(self.clauses[-1])] += 1
-        S1[res_mask, R_len[res_mask]] += 1
-        S1_new = np.vstack([S1, C_score[None]])
-        self.S1 = S1_new
-
     def which_res_var(self, idx1, idx2):
         """Determines which variable is being resolved on"""
         c1, c2 = self.clauses[idx1], self.clauses[idx2]
@@ -772,6 +717,9 @@ class ResUNSAT():
         for i, VA in enumerate(VAs):
             if isinstance(VA, th.Tensor):
                 VA = VA.squeeze(0).detach().cpu().numpy()
+            # Batched decoder outputs are padded to max_vars across the batch;
+            # trim to this row's n_vars before broadcasting against orig_mat.
+            VA = np.asarray(VA)[:f.n_vars]
             VA_sign = VA.copy()
             VA_sign[VA_sign == 0] = -1
             sub_mat = orig_mat * VA_sign
