@@ -26,7 +26,7 @@ class AnchAttention(nn.Module):
 		# Keys
 		n_vars = state["literal_emb"].shape[1]//2
 		L_emb = state["literal_emb"]
-		K = L_emb[:, :n_vars]# + L_emb[:, n_vars:]
+		K = L_emb[:, :n_vars]
 		K_transform = self.var_K(K)
 		if self.config['C_aggr'] == "sum":
 			Q = state["clause_emb"].sum(dim=1)
@@ -51,11 +51,6 @@ class AnchAttention(nn.Module):
 
 		return var_logp, var_idx
 
-	def get_grid_mask(self):
-		res_mask = self.config['env'].res_mask
-		return res_mask
-	
-	
 	def select_res_pair(self, logp_grid_exc, expert_pair):
 		# Decide which pair to take
 		if expert_pair is not None:
@@ -85,11 +80,8 @@ class AnchAttention(nn.Module):
 
 		pool = state["clause_emb"]
 
-		Q_pool = pool
-		K_pool = pool
-
-		Q = Q_pool[:, piv_dict["v_pos_idx"]]
-		K = K_pool[:, piv_dict["v_neg_idx"]]
+		Q = pool[:, piv_dict["v_pos_idx"]]
+		K = pool[:, piv_dict["v_neg_idx"]]
 
 		# Compute attention scores
 		q = self.W_Q(Q)
@@ -228,23 +220,29 @@ class AnchAttention(nn.Module):
 		# pair is already taken. For each (p, n) in the small grid, look up
 		# global indices via pos_idx[b, p] / neg_idx[b, n] and test against
 		# state["taken_set"][b].
-		taken_pair_mask = th.zeros(B, max_pos, max_neg, dtype=th.bool, device=device)
 		taken_set_list = state["taken_set"]
 		# Bring small-grid global indices to CPU once for the lookup loop.
 		pos_idx_cpu = pos_idx.detach().cpu().numpy()
 		neg_idx_cpu = neg_idx.detach().cpu().numpy()
 		pos_mask_cpu = pos_mask.detach().cpu().numpy()
 		neg_mask_cpu = neg_mask.detach().cpu().numpy()
+		# Per-row global→small lookup tables (only for valid slots), built
+		# once and reused by both the taken-set scan and the expert-pair scan.
+		g2pos_list = [None] * B
+		g2neg_list = [None] * B
+		def _row_lookup(b):
+			if g2pos_list[b] is None:
+				pl = int(pos_mask_cpu[b].sum())
+				nl = int(neg_mask_cpu[b].sum())
+				g2pos_list[b] = {int(pos_idx_cpu[b, p]): p for p in range(pl)}
+				g2neg_list[b] = {int(neg_idx_cpu[b, n]): n for n in range(nl)}
+			return g2pos_list[b], g2neg_list[b]
 		taken_pair_mask_np = np.zeros((B, max_pos, max_neg), dtype=bool)
 		for b in range(B):
 			ts = taken_set_list[b]
 			if not ts:
 				continue
-			# Build per-row global→small lookup tables (only for valid slots).
-			pl = pos_mask_cpu[b].sum()
-			nl = neg_mask_cpu[b].sum()
-			g2pos = {int(pos_idx_cpu[b, p]): p for p in range(int(pl))}
-			g2neg = {int(neg_idx_cpu[b, n]): n for n in range(int(nl))}
+			g2pos, g2neg = _row_lookup(b)
 			for (p_glob, n_glob) in ts:
 				ps = g2pos.get(int(p_glob))
 				ns = g2neg.get(int(n_glob))
@@ -287,10 +285,7 @@ class AnchAttention(nn.Module):
 					ps_list.append(0); ns_list.append(0)
 					continue
 				pi, pj = int(p[0]), int(p[1])
-				pl = int(pos_mask_cpu[b].sum())
-				nl = int(neg_mask_cpu[b].sum())
-				g2pos = {int(pos_idx_cpu[b, k_]): k_ for k_ in range(pl)}
-				g2neg = {int(neg_idx_cpu[b, k_]): k_ for k_ in range(nl)}
+				g2pos, g2neg = _row_lookup(b)
 				ps_b = g2pos.get(pi)
 				ns_b = g2neg.get(pj)
 				if ps_b is None or ns_b is None:
@@ -312,11 +307,10 @@ class AnchAttention(nn.Module):
 
 		# Per-row taken_set update: only running rows.
 		running_mask = state.get("running_mask")
-		c_pos_cpu = c_pos_global.detach().cpu().tolist()
-		c_neg_cpu = c_neg_global.detach().cpu().tolist()
+		c_idx_cpu = c_idx.detach().cpu().tolist()
 		for b in range(B):
 			if running_mask is not None and not bool(running_mask[b]):
 				continue
-			taken_set_list[b].add((int(c_pos_cpu[b]), int(c_neg_cpu[b])))
+			taken_set_list[b].add((int(c_idx_cpu[b][0]), int(c_idx_cpu[b][1])))
 
 		return {"c_logp": c_logp, "c_idx": c_idx}
