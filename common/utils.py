@@ -243,7 +243,6 @@ def get_config():
     
 
     # Base policy args
-    parser.add_argument("--no_recurrence", action='store_true')
     parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--enc_dec_cycle", action='store_true')
     parser.add_argument("--bidirectional", action='store_true')
