@@ -1,10 +1,5 @@
 import torch as th
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Any, Dict, Optional, Tuple, Union
-from common.utils import Scheduler
-import itertools
-import numpy as np
 from common.utils import masked_log_softmax
 
 
@@ -18,23 +13,24 @@ class CascAttention(nn.Module):
 		self.W2 = nn.Linear(Q_size, emb_size)
 		self.vt = nn.Linear(emb_size, 1)
 
-	def step(self, candidates, query, valid_mask=None):
+	def _logits(self, candidates, query):
 		# (batch_size, max_seq_len, hidden_size)
 		key_transform = self.W1(candidates)
-
 		# (batch_size, 1 (unsqueezed), hidden_size)
 		query_transform = self.W2(query).unsqueeze(1)
-
 		# 1st line of Eq.(3) in the paper
 		# (batch_size, max_seq_len, 1) => (batch_size, max_seq_len)
-		u_i = self.vt(th.tanh(key_transform + query_transform)).squeeze(-1)
+		return self.vt(th.tanh(key_transform + query_transform)).squeeze(-1)
+
+	def step(self, candidates, query, valid_mask=None):
+		u_i = self._logits(candidates, query)
 
 		# softmax with only valid inputs, excluding zero padded parts
 		# log-softmax for a better numerical stability
 		mask_t = th.ones_like(u_i)
 		if valid_mask is not None:
 			mask_t[:, ~valid_mask] = 0.0
-		
+
 		log_score = masked_log_softmax(u_i, mask_t, dim=-1)
 
 		return log_score
@@ -43,7 +39,6 @@ class CascAttention(nn.Module):
 		pool = state["clause_emb"]
 
 		K = pool
-		# Q = th.zeros_like(pool[:, 0])
 		if self.config['C_aggr'] == "sum":
 			mean_clause = pool.sum(dim=1)
 		else:
@@ -67,11 +62,10 @@ class CascAttention(nn.Module):
 			Q = c1_key + mean_clause
 		else:
 			Q = th.cat([mean_clause, c1_key], dim=-1)
-		state["taken_map"][index1] = state["taken_map"].get(index1, []) 
 		# Construct mask
 		res_mask = self.config['env'].res_mask
 		mask = res_mask[index1]
-		mask[state["taken_map"][index1]] = False
+		mask[state["taken_map"].get(index1, [])] = False
 
 		log_pointer_score2 = self.step(K, Q, mask)
 		# Maximal index
@@ -117,14 +111,15 @@ class CascAttention(nn.Module):
 		else:
 			Q = th.cat([mean_clause, th.zeros_like(mean_clause)], dim=-1)
 
-		log_p1 = self.step(K, Q)                                 # (B, C)
-		# Mask invalid clauses for first pick
+		# Mask invalid clauses for first pick. Apply masked_log_softmax once
+		# directly on the raw logits (step() would otherwise log_softmax with
+		# an all-ones mask first, which is redundant and burns extra exp/log).
 		mask1 = clause_mask.float()
 		mask1_safe = mask1.clone()
 		all_invalid1 = mask1.sum(dim=-1) == 0
 		if all_invalid1.any():
 			mask1_safe[all_invalid1, 0] = 1.0
-		log_p1 = masked_log_softmax(log_p1, mask1_safe, dim=-1)
+		log_p1 = masked_log_softmax(self._logits(K, Q), mask1_safe, dim=-1)  # (B, C)
 
 		if expert_pairs is None:
 			index1 = th.argmax(log_p1, dim=-1)                  # (B,)
@@ -156,12 +151,11 @@ class CascAttention(nn.Module):
 			# Always exclude self-resolution explicitly
 			mask2[b, i1] = 0.0
 
-		log_p2 = self.step(K, Q2)                                # (B, C)
 		mask2_safe = mask2.clone()
 		all_invalid2 = mask2.sum(dim=-1) == 0
 		if all_invalid2.any():
 			mask2_safe[all_invalid2, 0] = 1.0
-		log_p2 = masked_log_softmax(log_p2, mask2_safe, dim=-1)
+		log_p2 = masked_log_softmax(self._logits(K, Q2), mask2_safe, dim=-1)  # (B, C)
 
 		if expert_pairs is None:
 			index2 = th.argmax(log_p2, dim=-1)
@@ -182,10 +176,11 @@ class CascAttention(nn.Module):
 
 		# Per-row taken_map update.
 		running_mask = state.get("running_mask")
+		idx2_cpu = index2.detach().cpu().tolist()
 		for b in range(B):
 			if running_mask is not None and not bool(running_mask[b]):
 				continue
-			i1, i2 = idx1_cpu[b], int(index2[b].item())
+			i1, i2 = idx1_cpu[b], idx2_cpu[b]
 			taken_map[b][i1] = taken_map[b].get(i1, []) + [i2]
 			taken_map[b][i2] = taken_map[b].get(i2, []) + [i1]
 
